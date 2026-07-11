@@ -3,12 +3,16 @@ Ijara elonlari boti uchun ma'lumotlar bazasi (SQLite).
 Barcha jadval va so'rovlar shu yerda.
 """
 import os
+import json
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime, timedelta
 
-# Railway'da doimiy Volume qo'shsangiz, uni masalan /data ga bog'lab,
+# Railway'da Volume qo'shsangiz, uni /data ga bog'lab,
 # DB_PATH environment o'zgaruvchisini /data/ijara_bot.db qiling.
 DB_PATH = os.environ.get("DB_PATH", "ijara_bot.db")
+
+EXPIRY_DAYS = 20
 
 
 @contextmanager
@@ -35,20 +39,28 @@ def init_db():
                 kim_uchun TEXT NOT NULL,
                 tavsif TEXT,
                 telefon TEXT NOT NULL,
-                photo_file_id TEXT,
+                contact_username TEXT,
+                manzil_text TEXT,
+                latitude REAL,
+                longitude REAL,
+                photo_file_ids TEXT,
                 is_active INTEGER DEFAULT 1,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
 
-def add_listing(owner_id, owner_username, tuman, xona_soni, narx, kim_uchun, tavsif, telefon, photo_file_id):
+def add_listing(owner_id, owner_username, tuman, xona_soni, narx, kim_uchun, tavsif,
+                 telefon, contact_username, manzil_text, latitude, longitude, photo_file_ids):
     with get_conn() as conn:
         cur = conn.execute("""
             INSERT INTO listings
-                (owner_id, owner_username, tuman, xona_soni, narx, kim_uchun, tavsif, telefon, photo_file_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (owner_id, owner_username, tuman, xona_soni, narx, kim_uchun, tavsif, telefon, photo_file_id))
+                (owner_id, owner_username, tuman, xona_soni, narx, kim_uchun, tavsif,
+                 telefon, contact_username, manzil_text, latitude, longitude, photo_file_ids)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (owner_id, owner_username, tuman, xona_soni, narx, kim_uchun, tavsif,
+              telefon, contact_username, manzil_text, latitude, longitude,
+              json.dumps(photo_file_ids or [])))
         return cur.lastrowid
 
 
@@ -62,7 +74,7 @@ def search_listings(tuman=None, xona_soni=None, kim_uchun=None, max_narx=None, l
         query += " AND xona_soni = ?"
         params.append(xona_soni)
     if kim_uchun and kim_uchun != "Barchasi":
-        query += " AND (kim_uchun = ? OR kim_uchun = 'Barchasi uchun')"
+        query += " AND kim_uchun = ?"
         params.append(kim_uchun)
     if max_narx:
         query += " AND narx <= ?"
@@ -70,8 +82,10 @@ def search_listings(tuman=None, xona_soni=None, kim_uchun=None, max_narx=None, l
     query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
     params.extend([limit, offset])
     with get_conn() as conn:
-        rows = conn.execute(query, params).fetchall()
-        return [dict(r) for r in rows]
+        rows = [dict(r) for r in conn.execute(query, params).fetchall()]
+        for r in rows:
+            r["photo_file_ids"] = json.loads(r["photo_file_ids"] or "[]")
+        return rows
 
 
 def count_listings(tuman=None, xona_soni=None, kim_uchun=None, max_narx=None):
@@ -84,7 +98,7 @@ def count_listings(tuman=None, xona_soni=None, kim_uchun=None, max_narx=None):
         query += " AND xona_soni = ?"
         params.append(xona_soni)
     if kim_uchun and kim_uchun != "Barchasi":
-        query += " AND (kim_uchun = ? OR kim_uchun = 'Barchasi uchun')"
+        query += " AND kim_uchun = ?"
         params.append(kim_uchun)
     if max_narx:
         query += " AND narx <= ?"
@@ -95,16 +109,22 @@ def count_listings(tuman=None, xona_soni=None, kim_uchun=None, max_narx=None):
 
 def get_user_listings(owner_id):
     with get_conn() as conn:
-        rows = conn.execute(
+        rows = [dict(r) for r in conn.execute(
             "SELECT * FROM listings WHERE owner_id = ? ORDER BY created_at DESC", (owner_id,)
-        ).fetchall()
-        return [dict(r) for r in rows]
+        ).fetchall()]
+        for r in rows:
+            r["photo_file_ids"] = json.loads(r["photo_file_ids"] or "[]")
+        return rows
 
 
 def get_listing(listing_id):
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM listings WHERE id = ?", (listing_id,)).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        d = dict(row)
+        d["photo_file_ids"] = json.loads(d["photo_file_ids"] or "[]")
+        return d
 
 
 def deactivate_listing(listing_id, owner_id):
@@ -113,3 +133,14 @@ def deactivate_listing(listing_id, owner_id):
             "UPDATE listings SET is_active = 0 WHERE id = ? AND owner_id = ?",
             (listing_id, owner_id),
         )
+
+
+def deactivate_expired_listings():
+    """EXPIRY_DAYS kundan eski faol elonlarni o'chiradi. O'chirilgan elonlar sonini qaytaradi."""
+    cutoff = (datetime.utcnow() - timedelta(days=EXPIRY_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE listings SET is_active = 0 WHERE is_active = 1 AND created_at < ?",
+            (cutoff,),
+        )
+        return cur.rowcount

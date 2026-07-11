@@ -30,12 +30,22 @@ python bot.py
 ```
 Bot ishga tushgach, Telegram'da botingizga `/start` yozing.
 
-## Buyruqlar
-- `/start` — botni boshlash
+## Buyruqlar va menyu
+`/start` yozgach, pastda doimiy menyu chiqadi: **E'lon joylash**, **Uy qidiruv**, **Mening elonlarim**.
+Buyruqlar orqali ham ishlaydi:
 - `/elon_joylash` — uy egasi uchun: yangi elon joylash (bosqichma-bosqich savol-javob)
 - `/qidiruv` — ijarachi uchun: filtr orqali qidirish (tuman → xona soni → kimlar uchun → narx)
 - `/mening_elonlarim` — o'z elonlaringizni ko'rish va o'chirish
 - `/bekor_qilish` — joriy amalni bekor qilish
+- `/tugatish` — rasm yuborishni tugatish (elon joylashda)
+- `/otkazish` — ixtiyoriy bosqichni (username, manzil, rasm) o'tkazib yuborish
+
+## Yangi imkoniyatlar
+- **Kimlar uchun**: Oila / Talaba Qizlar / Talaba O'g'il bolalar
+- **Telegram username** (ixtiyoriy) — telefon raqami yoniga qo'shiladi
+- **Manzil**: Telegram location (pin) yoki qo'lda batafsil yozilgan manzil
+- **Cheksiz rasm** — bir nechta rasm yuborish mumkin, elon ko'rsatilganda guruh bo'lib chiqadi
+- **Avtomatik eskirish** — 20 kundan keyin elon avtomatik nofaol qilinadi (har kuni tekshiriladi)
 
 ## Doimiy ishlashi uchun (server kerak)
 Bot kompyuteringiz o'chganda to'xtaydi. 24/7 ishlashi uchun arzon VPS kerak
