@@ -6,6 +6,7 @@ Ishga tushirish:
     2. BOT_TOKEN environment o'zgaruvchisini o'rnating
     3. python bot.py
 """
+import asyncio
 import os
 import logging
 from telegram import (
@@ -32,6 +33,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "PUT_YOUR_TOKEN_HERE")
+CHANNEL_USERNAME = os.environ.get("CHANNEL_USERNAME", "@Ijara_Agent")
 
 TUMANLAR = [
     "Bektemir", "Chilonzor", "Mirzo Ulug'bek", "Mirobod", "Olmazor",
@@ -279,6 +281,16 @@ async def post_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     context.user_data.clear()
     await q.edit_message_text(f"✅ Elon joylandi! (ID: {listing_id})\n\nEndi ijarachilar buni qidiruv orqali topishadi.")
+
+    # Yangi elonni guruhga avtomatik joylash (10 soniyadan ortiq kutmaydi, botni to'xtatib qo'ymaydi)
+    try:
+        listing = db.get_listing(listing_id)
+        await asyncio.wait_for(send_listing_card(context, CHANNEL_USERNAME, listing), timeout=10)
+    except asyncio.TimeoutError:
+        logger.warning(f"Guruhga yuborish 10 soniyada tugamadi (ID {listing_id}), o'tkazib yuborildi.")
+    except Exception:
+        logger.warning(f"Elon guruhga yuborilmadi (ID {listing_id})", exc_info=True)
+
     return ConversationHandler.END
 
 
@@ -343,6 +355,29 @@ async def search_narx_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await show_results(update, context)
 
 
+async def send_listing_card(context: ContextTypes.DEFAULT_TYPE, chat_id, r):
+    username_line = f"\n👤 Telegram: {r['contact_username']}" if r.get("contact_username") else ""
+    manzil_line = f"\n🏠 Manzil: {r['manzil_text']}" if r.get("manzil_text") else ""
+    caption = (
+        f"📍 {r['tuman']} | 🚪 {r['xona_soni']} xonali | 💵 ${r['narx']}/oy\n"
+        f"👥 {r['kim_uchun']}\n\n"
+        f"📝 {r['tavsif']}"
+        f"{manzil_line}\n\n"
+        f"📞 Bog'lanish: {r['telefon']}{username_line}"
+    )
+    photos = r.get("photo_file_ids") or []
+    if len(photos) > 1:
+        media = [InputMediaPhoto(pid, caption=caption if i == 0 else None) for i, pid in enumerate(photos)]
+        await context.bot.send_media_group(chat_id, media)
+    elif len(photos) == 1:
+        await context.bot.send_photo(chat_id, photos[0], caption=caption)
+    else:
+        await context.bot.send_message(chat_id, caption)
+
+    if r.get("latitude") and r.get("longitude"):
+        await context.bot.send_location(chat_id, r["latitude"], r["longitude"])
+
+
 async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE, offset=0):
     f = context.user_data.get("filters", {})
     results = db.search_listings(
@@ -362,26 +397,7 @@ async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE, offse
 
     await context.bot.send_message(chat.id, f"🔎 Topildi: {total} ta elon")
     for r in results:
-        username_line = f"\n👤 Telegram: {r['contact_username']}" if r.get("contact_username") else ""
-        manzil_line = f"\n🏠 Manzil: {r['manzil_text']}" if r.get("manzil_text") else ""
-        caption = (
-            f"📍 {r['tuman']} | 🚪 {r['xona_soni']} xonali | 💵 ${r['narx']}/oy\n"
-            f"👥 {r['kim_uchun']}\n\n"
-            f"📝 {r['tavsif']}"
-            f"{manzil_line}\n\n"
-            f"📞 Bog'lanish: {r['telefon']}{username_line}"
-        )
-        photos = r.get("photo_file_ids") or []
-        if len(photos) > 1:
-            media = [InputMediaPhoto(pid, caption=caption if i == 0 else None) for i, pid in enumerate(photos)]
-            await context.bot.send_media_group(chat.id, media)
-        elif len(photos) == 1:
-            await context.bot.send_photo(chat.id, photos[0], caption=caption)
-        else:
-            await context.bot.send_message(chat.id, caption)
-
-        if r.get("latitude") and r.get("longitude"):
-            await context.bot.send_location(chat.id, r["latitude"], r["longitude"])
+        await send_listing_card(context, chat.id, r)
 
     if offset + 5 < total:
         keyboard = InlineKeyboardMarkup([[
@@ -442,12 +458,17 @@ async def expire_old_listings_job(context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"{count} ta eskirgan elon avtomatik o'chirildi.")
 
 
+async def error_handler(update, context: ContextTypes.DEFAULT_TYPE):
+    logger.error("Handler ichida kutilmagan xato yuz berdi:", exc_info=context.error)
+
+
 # ======================================================================
 # MAIN
 # ======================================================================
 def main():
     db.init_db()
     app = Application.builder().token(BOT_TOKEN).build()
+    app.add_error_handler(error_handler)
 
     post_entry = [CommandHandler("elon_joylash", post_start), MessageHandler(filters.Regex(f"^{BTN_ELON}$"), post_start)]
     search_entry = [CommandHandler("qidiruv", search_start), MessageHandler(filters.Regex(f"^{BTN_QIDIRUV}$"), search_start)]
